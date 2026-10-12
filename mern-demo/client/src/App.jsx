@@ -1,23 +1,52 @@
+
 import { useEffect, useState } from "react";
 import "./App.css";
 
+const API_URL = "https://mern-backend-ekzo.onrender.com";
+
+async function readResponse(response) {
+  const text = await response.text();
+
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(
+      `Backend trả về HTML hoặc dữ liệu không hợp lệ (HTTP ${response.status}). Kiểm tra API và Render Logs.`
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      data.message || data.error || `Yêu cầu thất bại (HTTP ${response.status})`
+    );
+  }
+
+  return data;
+}
+
 function App() {
   const [students, setStudents] = useState([]);
-
   const [studentId, setStudentId] = useState("");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-
   const [editingId, setEditingId] = useState(null);
+  const [loading, setLoading] = useState(false);
 
   // Lấy danh sách sinh viên
   const fetchStudents = async () => {
     try {
-      const response = await fetch("/api/students");
-      const data = await response.json();
+      const response = await fetch(`${API_URL}/api/students`);
+      const data = await readResponse(response);
+
+      if (!Array.isArray(data)) {
+        throw new Error("API danh sách không trả về một mảng sinh viên.");
+      }
+
       setStudents(data);
     } catch (error) {
-      console.error("Lỗi:", error);
+      console.error("Lỗi tải danh sách:", error);
+      alert(`Không tải được danh sách: ${error.message}`);
     }
   };
 
@@ -29,48 +58,51 @@ function App() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
+    if (loading) return;
+
     const student = {
-      studentId,
-      name,
-      email,
+      studentId: studentId.trim(),
+      name: name.trim(),
+      email: email.trim(),
     };
 
+    if (!student.studentId || !student.name || !student.email) {
+      alert("Vui lòng nhập đầy đủ mã sinh viên, họ tên và email.");
+      return;
+    }
+
+    setLoading(true);
+
     try {
-      let response;
+      const isEditing = Boolean(editingId);
+      const url = isEditing
+        ? `${API_URL}/api/students/${editingId}`
+        : `${API_URL}/api/students`;
 
-      if (editingId) {
-        // Cập nhật
-        response = await fetch(`/api/students/${editingId}`, {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(student),
-        });
-      } else {
-        // Thêm
-        response = await fetch("/api/students", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(student),
-        });
-      }
+      const response = await fetch(url, {
+        method: isEditing ? "PUT" : "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(student),
+      });
 
-      if (!response.ok) {
-        throw new Error("Thao tác thất bại");
-      }
+      await readResponse(response);
 
+      // Chỉ xóa form sau khi thao tác thành công
       setStudentId("");
       setName("");
       setEmail("");
       setEditingId(null);
 
-      fetchStudents();
+      await fetchStudents();
+      alert(isEditing ? "Cập nhật sinh viên thành công!" : "Thêm sinh viên thành công!");
     } catch (error) {
-      console.error("Lỗi:", error);
-      alert("Có lỗi xảy ra!");
+      console.error("Lỗi thêm/cập nhật:", error);
+      alert(`Không thực hiện được: ${error.message}`);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -80,6 +112,7 @@ function App() {
     setStudentId(student.studentId || "");
     setName(student.name || "");
     setEmail(student.email || "");
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   // Xóa sinh viên
@@ -89,18 +122,19 @@ function App() {
     }
 
     try {
-      const response = await fetch(`/api/students/${id}`, {
+      const response = await fetch(`${API_URL}/api/students/${id}`, {
         method: "DELETE",
+        headers: {
+          Accept: "application/json",
+        },
       });
 
-      if (!response.ok) {
-        throw new Error("Xóa thất bại");
-      }
-
-      fetchStudents();
+      await readResponse(response);
+      await fetchStudents();
+      alert("Xóa sinh viên thành công!");
     } catch (error) {
-      console.error("Lỗi:", error);
-      alert("Không thể xóa sinh viên!");
+      console.error("Lỗi xóa:", error);
+      alert(`Không thể xóa sinh viên: ${error.message}`);
     }
   };
 
@@ -116,7 +150,6 @@ function App() {
     <div className="container">
       <h1>Quản lý sinh viên</h1>
 
-      {/* Form */}
       <form onSubmit={handleSubmit}>
         <input
           type="text"
@@ -142,18 +175,21 @@ function App() {
           required
         />
 
-        <button type="submit">
-          {editingId ? "Cập nhật" : "Thêm sinh viên"}
+        <button type="submit" disabled={loading}>
+          {loading
+            ? "Đang xử lý..."
+            : editingId
+              ? "Cập nhật"
+              : "Thêm sinh viên"}
         </button>
 
         {editingId && (
-          <button type="button" onClick={handleCancel}>
+          <button type="button" onClick={handleCancel} disabled={loading}>
             Hủy
           </button>
         )}
       </form>
 
-      {/* Danh sách */}
       <h2>Danh sách sinh viên</h2>
 
       <table>
@@ -173,11 +209,13 @@ function App() {
               <td>{student.name}</td>
               <td>{student.email}</td>
               <td>
-                <button onClick={() => handleEdit(student)}>
+                <button type="button" onClick={() => handleEdit(student)}>
                   Sửa
                 </button>
-
-                <button onClick={() => handleDelete(student._id)}>
+                <button
+                  type="button"
+                  onClick={() => handleDelete(student._id)}
+                >
                   Xóa
                 </button>
               </td>
